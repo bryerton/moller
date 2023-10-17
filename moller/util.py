@@ -1,6 +1,18 @@
 import math
 
-def find_mid_of_longest_run(arr, value):
+def find_mid_of_longest_run(arr: list, value: int) -> int:
+    """ Find the midpoint of a the longest run of values
+
+    Used in MOLLER to get the longest 'good' spot in the ADC delay value setting range
+
+    Args:
+        arr (list): List of values to run through
+
+        value (int): Value to use as 'good' (typically 1 or 0)
+
+    Returns:
+        (int) Midpoint of longest 'good' run
+    """
     cur = 0
 
     run = 0
@@ -31,51 +43,3 @@ def find_mid_of_longest_run(arr, value):
 
     return max_pos + math.floor(max_run / 2)
 
-
-def find_mid_of_longest_run_with_wrap(arr, value):
-    cur = 0
-    pos = 0
-    run = 0
-    mid_pos = 0
-    old_run = 0
-    loop = False
-
-    while(True):
-        if arr[cur] == value:
-            if run == 0:
-                pos = cur
-            run = run + 1
-        else:
-            if loop == True:
-                if old_run < run:
-                    old_run = run
-                    mid_pos = pos + math.floor(run / 2)
-                    if(mid_pos >= len(arr)):
-                        mid_pos = mid_pos - len(arr)
-
-                break
-            else:
-                if old_run < run:
-                    old_run = run
-                    mid_pos = pos + math.floor(run / 2)
-                    if(mid_pos >= len(arr)):
-                        mid_pos = mid_pos - len(arr)
-                    pos = cur
-
-            run = 0
-
-
-        cur = cur + 1
-
-        # Its over, and last value was not part of run
-        if cur == len(arr) and (run == 0 or run == len(arr)) :
-            if run == len(arr):
-                mid_pos = math.floor(len(arr) / 2)
-            break
-
-        # Hit end of array, but loop check
-        if cur == len(arr) and run != 0:
-            loop = True
-            cur = 0
-
-    return mid_pos

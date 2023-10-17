@@ -12,14 +12,6 @@ moller.ctrl module
    :undoc-members:
    :show-inheritance:
 
-moller.discovery module
------------------------
-
-.. automodule:: moller.discovery
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 moller.util module
 ------------------
 

@@ -10,7 +10,7 @@ import numpy as np
 from threading import Thread
 from . import ctrl as moller_ctrl
 from . import util as moller_util
-from . import discovery as util_discover
+from . import __discovery as util_discover
 from . import __version__ as __version__
 
 VERSION = __version__
@@ -36,13 +36,21 @@ flag = GracefulExiter()
 def arg_write(args):
     socket = moller_ctrl.ctrl_init(args.ip)
     resp = moller_ctrl.write_msg(socket, int(args.addr, 0), int(args.data, 0))
-    print(hex(resp))
-    print(str(int(resp)))
+    if args.json:
+        print('{{"addr": 0x{0:08X}, "data": 0x{0:08X}}}'.format(int(args.addr, 0), int(resp)))
+
+    elif args.verbose:
+        print('0x{0:08X}'.format(int(resp)) + " [" + str(int(resp)) + "]")
 
 def arg_read(args):
     socket = moller_ctrl.ctrl_init(args.ip)
     resp = moller_ctrl.read_msg(socket, int(args.addr, 0))
-    print('0x{0:08X}'.format(int(resp)) + " [" + str(int(resp)) + "]")
+    if args.json:
+        print('{{"addr": 0x{0:08X}, "data": 0x{0:08X}}}'.format(int(args.addr, 0), int(resp)))
+    elif args.verbose:
+        print('0x{0:08X}'.format(int(resp)) + " [" + str(int(resp)) + "]")
+    else:
+        print('0x{0:08X}'.format(int(resp)))
 
 def arg_status(args):
     socket = moller_ctrl.ctrl_init(args.ip)
@@ -107,109 +115,213 @@ def arg_status(args):
 def arg_data(args):
     ctrl_socket = moller_ctrl.ctrl_init(args.ip)
 
-    moller_ctrl.write_msg(ctrl_socket, 0x44, 0x80002000)
-    moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000)
+    sample_rate = int(args.convert_time) & 0xFF
+
+    rate_divisor = int(args.divisor) & 0x7F
+    rate_divisor = 0x80 | rate_divisor
+
+    if args.ch1 < 1:
+        args.ch1 = 1
+
+    if args.ch1 > 16:
+        args.ch1 = 16
+
+    if args.ch2 == None:
+        args.ch2 = args.ch1
+    else:
+        if args.ch2 < 1:
+            args.ch2 = 1
+
+        if args.ch2 > 16:
+            args.ch2 = 16
+
+    # Real range is 0-15
+    args.ch1 = args.ch1 - 1
+    args.ch2 = args.ch2 - 1
+
+
+    moller_ctrl.write_msg(ctrl_socket, 0x44, 0x80000000 | (args.ch1 << 16) | (args.ch2 << 20) | (rate_divisor << 24)  | moller_ctrl.ADC_PACKET_SIZE)
+    moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000 | (sample_rate << 16))
+
+    # Give the digitizer a split second to update new settings
+    time.sleep(0.1)
 
     # The streamer always returns at least 2, if you give it 1, it will return zero, so bump upwards
-    args.samples = int(args.samples)
-    if args.samples % 2 != 0:
-        args.samples = args.samples + 1
+    if args.num_samples % 2 != 0:
+        args.num_samples = args.num_samples + 1
 
     data_socket = moller_ctrl.data_init(args.ip)
-    resp = moller_ctrl.read_samples(data_socket, num_samples_to_read=int(args.samples), convert_time=int(args.rate))
+    resp = moller_ctrl.read_samples(ctrl_socket, data_socket, num_samples_to_read=int(args.num_samples), zero_ts=args.zero)
     if(resp is not None):
-        print("Timestamp(ns),Channel,Data")
-        for line in resp:
-            print(str(line[0]) + "," + str(line[1]) + "," + str(line[2]))
+        if args.json:
+            print('[')
+            for idx, line in enumerate(resp):
+                # Smallest voltage is 0.000015625 so need 9 decimal places
+                print('{{"t":{:d},"c":{:d},"d":{:.09f}}}'.format(line[0], line[1], line[2]), end='')
+                if idx < len(resp) - 1:
+                    print(",")
+                else:
+                    print()
+            print(']')
+        elif args.verbose:
+            print("Timestamp[ns],Channel,Data[V]")
+            last_time = resp[0][0]
+
+            for idx, line in enumerate(resp):
+                print('{:d},{:d},{:.09f} [+{:d}]'.format(line[0], line[1], line[2], line[0] - last_time))
+                # We always have min two so this is safe
+                if resp[0][1] == resp[1][1]:
+                    last_time = line[0]
+                elif idx % 2 == 1:
+                    last_time = line[0]
+        else:
+            print("Timestamp[ns],Channel,Data[V]")
+            for line in resp:
+                print('{:d},{:d},{:.09f}'.format(line[0], line[1], line[2]))
     else:
         print("Timeout attempting to get data")
 
 def arg_plot(args):
-
     graph_data = []
     for n in range(16):
-        graph_data.append({"ts": [], "x": []})
+        graph_data.append({"t": [], "x": []})
 
     lines = []
 
-    if(args.channel != "all"):
-        args.channel = int(args.channel)
-        if args.channel < 1:
-            args.channel = 1
 
-        elif args.channel > 16:
-            args.channel = 16
+    if(args.ch1 != "all"):
+        args.ch1 = int(args.ch1)
+
+        if args.ch1 < 1:
+            args.ch1 = 1
+
+        if args.ch1 > 16:
+            args.ch1 = 16
+
+        if args.ch2 == None:
+            args.ch2 = args.ch1
+        else:
+            if args.ch2 < 1:
+                args.ch2 = 1
+
+            if args.ch2 > 16:
+                args.ch2 = 16
+
+        # Real range is 0-15
+        args.ch1 = args.ch1 - 1
+        args.ch2 = args.ch2 - 1
 
     ctrl_socket = moller_ctrl.ctrl_init(args.ip)
 
+    # Get timescale
+    reg = moller_ctrl.read_msg(ctrl_socket, 0x44)
+    divisor = ((reg >> 24) & 0x7F) + 1
+
+    reg = moller_ctrl.read_msg(ctrl_socket, 0x48)
+    convert_time = (reg >> 16) & 0xFF
+    if convert_time < moller_ctrl.MIN_CONVERT_CLOCKS:
+        convert_time = moller_ctrl.MIN_CONVERT_CLOCKS
+
+    xlim = (convert_time * moller_ctrl.CLOCKS_TO_NANOSECONDS * divisor) * (args.num_samples - 1)
+
+
     def get_data(graph_data):
 
-        data = {'time': [], 'samples': []}
-
-        ch = 0
-        if(args.channel != "all"):
-            ch = args.channel - 1
+        if(args.ch1 != "all"):
+            ch = args.ch1
+        else:
             ch = 0
 
-        moller_ctrl.write_msg(ctrl_socket, 0x44, 0x80000000 | (ch << 16) | (ch << 20) | moller_ctrl.ADC_PACKET_SIZE)
-        moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000)
+        sample_rate = int(args.convert_time) & 0xFF
+
+        rate_divisor = int(args.divisor) & 0x7F
+        rate_divisor = 0x80 | rate_divisor
+
+        moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000 | (sample_rate << 16))
 
         while not flag.exit():
 
-            data_socket = moller_ctrl.data_init(args.ip)
-
-            resp = moller_ctrl.read_samples(data_socket, moller_ctrl.ADC_SAMPLES_SIZE, moller_ctrl.ADC_CONVERT_TIME, moller_ctrl.ADC_PACKET_SIZE, True)
-            if(resp == None):
-                break
-
-            sample_data = []
-            for sample in resp:
-                sample_data.append(sample[2])
-
-            graph_data[ch]['x'] = np.array(sample_data) * moller_ctrl.ADC_RESOLUTION
-
-            if(args.channel == "all"):
+            if(args.ch1 != "all"):
+                if args.ch1 != args.ch2:
+                    if args.ch1 == ch:
+                        ch = args.ch2
+                    else:
+                        ch = args.ch1
+            else:
                 ch = ch + 1
                 if ch == 16:
                     ch = 0
 
-                moller_ctrl.write_msg(ctrl_socket, 0x44, 0x80000000 | (ch << 16) | (ch << 20) | moller_ctrl.ADC_PACKET_SIZE)
+            moller_ctrl.write_msg(ctrl_socket, 0x44, 0x80000000 | (ch << 16) | (ch << 20) | (rate_divisor << 24) | moller_ctrl.ADC_PACKET_SIZE)
+
+            time.sleep(0.001)
+
+            data_socket = moller_ctrl.data_init(args.ip)
+
+            resp = moller_ctrl.read_samples(ctrl_socket, data_socket, args.num_samples, True)
+            if(resp == None):
+                break
+
+            sample_data = []
+            sample_time = []
+            for sample in resp:
+                sample_time.append(sample[0])
+                sample_data.append(sample[2])
+
+            graph_data[ch]['t'] = np.array(sample_time)
+            graph_data[ch]['x'] = np.array(sample_data)
 
             data_socket.close()
 
             time.sleep(0.001)
 
+
     # This function is called periodically from FuncAnimation
     def animate(i, graph_data):
-        # Draw x and y lists
-        if args.channel == "all":
-            for i in range(16):
-                lines[i].set_ydata(graph_data[i]["x"])
+
+        if args.ch1 == "all":
+            # Draw x and y lists
+            for idx, line in enumerate(lines):
+                line.set_xdata(graph_data[idx]["t"])
+                line.set_ydata(graph_data[idx]["x"])
+
+        elif args.ch1 != args.ch2:
+            lines[0].set_xdata(graph_data[args.ch1]["t"])
+            lines[0].set_ydata(graph_data[args.ch1]["x"])
+            lines[1].set_xdata(graph_data[args.ch2]["t"])
+            lines[1].set_ydata(graph_data[args.ch2]["x"])
+
         else:
-            lines[0].set_ydata(graph_data[0]["x"])
+            lines[0].set_xdata(graph_data[args.ch1]["t"])
+            lines[0].set_ydata(graph_data[args.ch1]["x"])
+
         return lines
 
     def init_plot():
-        max_samples = moller_ctrl.ADC_SAMPLES_SIZE
+
         for idx, a in enumerate(ax):
-            if args.channel == "all":
+            if args.ch1 == "all":
                 a.set_title(str(idx + 1), x=0.1, y=0.9)
-                a.set_xticks([max_samples / 2, max_samples])
+            elif args.ch1 != args.ch2:
+                if idx == 0:
+                    a.set_title(str(args.ch1+1), x=0.1, y=0.9)
+                else:
+                    a.set_title(str(args.ch2+1), x=0.1, y=0.9)
             else:
-                a.set_title("Channel " + str(args.channel))
+                a.set_title("Channel " + str(args.ch1 + 1))
 
             a.set_yticks([moller_ctrl.VOLT_MIN, moller_ctrl.VOLT_MIN/2, 0, moller_ctrl.VOLT_MAX/2, moller_ctrl.VOLT_MAX])
-            a.set_xlim([0, max_samples])
+            a.set_xlim([0, xlim])
             a.set_ylim(moller_ctrl.VOLT_MIN, moller_ctrl.VOLT_MAX)
             a.grid(True)
 
         return lines
 
-    max_samples = moller_ctrl.ADC_SAMPLES_SIZE
+    max_samples = args.num_samples
 
     fig = plt.figure(figsize=(160, 90))
 
-    if args.channel == "all":
+    if args.ch1 == "all":
         gs = fig.add_gridspec(2, 8, wspace=0.0, hspace=0.05)
         px = gs.subplots(sharex=True)
         ax = [
@@ -231,30 +343,52 @@ def arg_plot(args):
             px[1, 7],
         ]
         fig.canvas.manager.set_window_title("All Channels")
-        fig.text(0.5, 0.04, "Sample #", ha="center", va="center")
+        fig.text(0.5, 0.04, "Time (ns)", ha="center", va="center")
+        fig.text(
+            0.06, 0.5, "Voltage (V)", ha="center", va="center", rotation="vertical"
+        )
+    elif args.ch1 != args.ch2:
+        gs = fig.add_gridspec(2, 1, wspace=0.0, hspace=0.05)
+        px = gs.subplots(sharex=True)
+        ax = [
+            px[0],
+            px[1],
+        ]
+        fig.canvas.manager.set_window_title("CH" + str(args.ch1 + 1) + " and CH" + str(args.ch2 + 1))
+        fig.text(0.5, 0.04, "Time (ns)", ha="center", va="center")
         fig.text(
             0.06, 0.5, "Voltage (V)", ha="center", va="center", rotation="vertical"
         )
     else:
         gs = fig.add_gridspec(1, hspace=0)
         ax = [gs.subplots(sharex=True)]
-        fig.canvas.manager.set_window_title("Channel #" + str(args.channel + 1))
+        fig.canvas.manager.set_window_title("Channel #" + str(args.ch1 + 1))
         plt.ylabel("Voltage (V)")
-        plt.xlabel("Sample #")
+        plt.xlabel("Time (ns)")
 
     plt.ioff()
 
     for i in range(16):
         for n in range(max_samples):
-            graph_data[i]["ts"].append(n)
+            graph_data[i]["t"].append(n)
             graph_data[i]["x"].append(None)
 
     # Draw x and y lists
-    if args.channel == "all":
+    if args.ch1 == "all":
         for i in range(16):
-            (line0,) = ax[i].plot(graph_data[i]["ts"], graph_data[i]["x"], label="X")
+            (line,) = ax[i].plot(graph_data[i]["t"], graph_data[i]["x"], label="X")
 
-            lines.append(line0)
+            lines.append(line)
+
+            # Format plot
+            for axs in ax:
+                axs.label_outer()
+
+    elif args.ch1 != args.ch2:
+        for i in range(2):
+            (line,) = ax[i].plot(graph_data[i]["t"], graph_data[i]["x"], label="X")
+
+            lines.append(line)
 
             # Format plot
             for axs in ax:
@@ -262,13 +396,12 @@ def arg_plot(args):
 
     else:
         (line0,) = ax[0].plot(
-            graph_data[0]["ts"], graph_data[0]["x"], label="X"
+            graph_data[0]["t"], graph_data[0]["x"], label="X"
         )
 
         lines.append(line0)
 
         # Format plot
-        plt.xlim([0, max_samples])
         plt.grid(True)
 
     # Set up plot to call animate() function periodically
@@ -399,6 +532,7 @@ def main():
     prog='moller_ctl'
     parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument('--version', action='version', version='%(prog)s ' + str(VERSION))
+    parser.add_argument('-j', '--json', action='store_true')
     parser.add_argument('-v', '--verbose', action='count', default=0, help='Increase logging verbosity, can be repeated')
     parser.add_argument('-l', '--log', metavar='file', help='Log to output file')
     parser.add_argument("ip", help="IP address of Moller Integrating ADC")
@@ -416,8 +550,12 @@ def main():
 
     data_parser = cmd_parser.add_parser("data")
     data_parser.set_defaults(func=arg_data)
-    data_parser.add_argument("samples", default=0, nargs="?")
-    data_parser.add_argument("-r", "--rate", default="0")
+    data_parser.add_argument("ch1", default=1, type=int, nargs="?", help='[0-15] ADC channel to stream')
+    data_parser.add_argument("ch2", default=None, type=int, nargs="?", help="[0-15] Second ADC channel to stream. Leave blank to interleave CH1 data")
+    data_parser.add_argument("-n", "--num_samples", default=1000, type=int, help="Number of samples to plot")
+    data_parser.add_argument("-c", "--convert_time", type=int, default="0", help="[17-255] Convert clock cycles")
+    data_parser.add_argument("-d", "--divisor", type=int, default="0", help="[0-127] Stream divide, 0=1x div, 1=2x div etc")
+    data_parser.add_argument("-z", "--zero", action='store_true')
 
     status_parser = cmd_parser.add_parser("status")
     status_parser.set_defaults(func=arg_status)
@@ -427,7 +565,11 @@ def main():
 
     plot_parser = cmd_parser.add_parser("plot")
     plot_parser.set_defaults(func=arg_plot)
-    plot_parser.add_argument("channel", default="all", nargs="?")
+    plot_parser.add_argument("ch1", default="all", type=str, nargs="?", help='[0-15] ADC channel to stream')
+    plot_parser.add_argument("ch2", default=None, type=int, nargs="?", help="[0-15] Second ADC channel to stream. Leave blank to interleave CH1 data")
+    plot_parser.add_argument("-n", "--num_samples", default=1000, type=int, help="Number of samples to plot")
+    plot_parser.add_argument("-c", "--convert_time", type=int, default="0", help="[17-255] Convert clock cycles")
+    plot_parser.add_argument("-d", "--divisor", type=int, default="0", help="[0-127] Stream divide, 0=1x div, 1=2x div etc")
 
     args = parser.parse_args()
 

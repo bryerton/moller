@@ -7,7 +7,7 @@ docs: ## Update python docs
 	@cd docs/sphinx; make html
 
 clean: ## Clean python cache files
-	@rm -rf output/build/ output/dist/ output/*.egg-info/ moller/__pycache__
+	@rm -rf output/* moller/__pycache__
 	@cd docs/sphinx; make clean
 
 build:

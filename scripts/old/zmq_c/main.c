@@ -7,9 +7,88 @@
 #include <pthread.h>
 #include <stdlib.h>
 
+#define CLOCKS_TO_NANOSECONDS 4  // There are 4ns per clock cycle for the ADC (250MHz)
+
 #define SAMPLES_PER_SECOND 14705883
 #define MAX_SAMPLES (SAMPLES_PER_SECOND*5)
 #define MAX_ALLOC   ((MAX_SAMPLES+MAX_SAMPLES)*8)
+
+
+void* ctrl_init(void* zctx, char* ip) {
+    char url[256];
+    void* socket;
+
+    snprintf(url, 255, "tcp://%s:5555", ip);
+
+    socket = zmq_socket(zctx, ZMQ_REQ);
+    if (zmq_connect(socket, url) != 0) {
+        return 0;
+    }
+
+    return socket;
+}
+
+void* data_init(void* zctx, char* ip) {
+    char url[256];
+    void* socket;
+
+    snprintf(url, 255, "tcp://%s:5556", ip);
+
+    socket = zmq_socket(zctx, ZMQ_SUB);
+    zmq_setsockopt(socket, ZMQ_SUBSCRIBE, "ADC", 3);
+    zmq_setsockopt(socket, ZMQ_RCVBUF, "", SAMPLES_PER_SECOND);
+    if (zmq_connect(socket, url) != 0) {
+        return 0;
+    }
+
+    return socket;
+}
+
+
+uint32_t read_register(void* zsocket, uint32_t addr) {
+    // Assumes you have a made a connection to the device using the REQ/REP
+    zmq_msg_t rx_msg;
+
+    uint32_t msg[3];
+    uint32_t resp[2];
+
+    msg[0] = 'r';
+    msg[1] = addr;
+    msg[2] = 0;
+
+    zmq_send(zsocket, msg, sizeof(msg), 0);
+
+    zmq_recv(zsocket, resp, sizeof(resp), 0);
+
+    if (resp[0] == 114) {
+        return resp[1];
+    }
+
+    return 0;
+}
+
+uint32_t write_register(void* zsocket, uint32_t addr, uint32_t data) {
+    // Assumes you have a made a connection to the device using the REQ/REP
+    zmq_msg_t rx_msg;
+
+    uint32_t msg[3];
+    uint32_t resp[2];
+
+    msg[0] = 'w';
+    msg[1] = addr;
+    msg[2] = data;
+
+    zmq_send(zsocket, msg, sizeof(msg), 0);
+
+    zmq_recv(zsocket, resp, sizeof(resp), 0);
+
+    if (resp[0] == 114) {
+        return resp[1];
+    }
+
+    return 0;
+}
+
 
 void *captureThread(void *vargp, uint32_t samples_to_retrieve, char* file_name) {
     uint8_t* data;
@@ -95,6 +174,14 @@ int main (int argc, char **argv) {
     context = zmq_ctx_new();
 
     zmq_ctx_set(context, ZMQ_IO_THREADS, 4);
+
+
+    void* zctrl = ctrl_init(context, "192.168.1.229");
+
+    for (int n = 0; n<(16); n+=1) {
+        uint32_t version = read_register(zctrl, n);
+        printf("addr: %d  data: %d [%x]\n", n, version, version);
+    }
 
     // set this to something reasonable, 1 second
     samples_to_retrieve = SAMPLES_PER_SECOND/8;

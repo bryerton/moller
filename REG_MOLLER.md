@@ -1,4 +1,4 @@
-# moller
+# MOLLER Register Map
 
 |||
 | --- | --- |

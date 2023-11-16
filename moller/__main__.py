@@ -260,7 +260,8 @@ def arg_plot(args):
 
             resp = moller_ctrl.read_samples(ctrl_socket, data_socket, args.num_samples, True)
             if(resp == None):
-                break
+                data_socket.close()
+                continue
 
             sample_data = []
             sample_time = []
@@ -270,8 +271,6 @@ def arg_plot(args):
 
             graph_data[ch]['t'] = np.array(sample_time)
             graph_data[ch]['x'] = np.array(sample_data)
-
-            data_socket.close()
 
             time.sleep(0.001)
 
@@ -453,10 +452,9 @@ def arg_align(args):
 
         # Clear counters and set to Test Mode
         moller_ctrl.write_msg(ctrl_socket, 0x48, 0xD0000000)
-        time.sleep(0.01)
+        time.sleep(0.02)
         moller_ctrl.write_msg(ctrl_socket, 0x48, 0xC0000000)
-
-        time.sleep(0.01)
+        time.sleep(0.02)
 
         for ch in range(16):
             result = moller_ctrl.read_msg(ctrl_socket, 0x0 + (ch*4))
@@ -480,7 +478,7 @@ def arg_align(args):
 
     # Reset the counters and take it out of test mode
     moller_ctrl.write_msg(ctrl_socket, 0x48, 0x90000000)
-    time.sleep(0.01)
+    time.sleep(0.02)
     moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000)
 
     # plot

@@ -1,5 +1,6 @@
 import zmq
 import struct
+from time import sleep
 
 MAX_DELAY_VALUE = 511
 
@@ -143,6 +144,7 @@ def read_samples(ctrl_socket: zmq.Socket, data_socket: zmq.Socket, num_samples_t
 
     samples = []
     sample_count = 0
+    word_count = 0
     ts = 0
 
     buffer = bytearray()
@@ -152,14 +154,15 @@ def read_samples(ctrl_socket: zmq.Socket, data_socket: zmq.Socket, num_samples_t
     poller = zmq.Poller()
     poller.register(data_socket, zmq.POLLIN)
 
-    while(sample_count < num_samples_to_read):
-        res = poller.poll(timeout=5000)
-        if(res):
+    while sample_count < num_samples_to_read:
+        res = poller.poll(timeout=50)
+        if res:
             msg = data_socket.recv_multipart(zmq.NOBLOCK)
             num_words, num_pkt, id, pkt_ts = struct.unpack_from("<HIxBQ", msg[1], 0)
             buffer = buffer + msg[1][16:]
+            word_count = word_count + (num_words - 1)
             sample_count = sample_count + ((num_words - 1) * 2)
-            if(not zero_ts and prev_pkt == None):
+            if not zero_ts and prev_pkt == None:
                 # Timestamps are generated from the 250MHz clock
                 ts = pkt_ts * CLOCKS_TO_NANOSECONDS
 
@@ -167,8 +170,10 @@ def read_samples(ctrl_socket: zmq.Socket, data_socket: zmq.Socket, num_samples_t
         else:
             return None
 
+        sleep(0.0001)
 
-    for n in range(int(num_samples_to_read/2)):
+
+    for n in range(int(word_count)):
         ch1, ch2 = struct.unpack_from("<ii", buffer, (n * 8))
 
         ch1_data = ch1 >> 14

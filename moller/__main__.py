@@ -59,16 +59,16 @@ def arg_status(args):
     print('Register Revision: ' + str(int(resp)))
 
     resp = moller_ctrl.read_msg(socket, 0x4C)
-    print('Frequency TD: ' + str(int(resp)))
+    print('Frequency TD: ' + str(int(resp) / 1000000 ) + " MHz")
 
     resp = moller_ctrl.read_msg(socket, 0x50)
-    print('Frequency Oscillator: ' + str(int(resp)))
+    print('Frequency Oscillator: ' + str(int(resp) / 1000000 ) + " MHz")
 
     resp = moller_ctrl.read_msg(socket, 0x54)
-    print('Frequency SOM0: ' + str(int(resp)))
+    print('Frequency SOM0: ' + str(int(resp) / 1000000 ) + " MHz")
 
     resp = moller_ctrl.read_msg(socket, 0x58)
-    print('Frequency SOM1: ' + str(int(resp)))
+    print('Frequency SOM1: ' + str(int(resp) / 1000000 ) + " MHz")
 
     resp = moller_ctrl.read_msg(socket, 0x5C)
     print("Clock Status: ", end="")

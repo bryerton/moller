@@ -39,24 +39,22 @@ MAX_CONVERT_CLOCKS = 255
 ADC_DIVISOR = 1
 ADC_CONVERT_CLOCKS = int(MIN_CONVERT_CLOCKS*2)
 ADC_CONVERT_TIME = (ADC_CONVERT_CLOCKS * CLOCKS_TO_NANOSECONDS)
-ADC_SAMPLE_RATE = ((1.0/(ADC_CONVERT_TIME / 1000000000)) / ADC_DIVISOR) # Dividing the sample rate by 2 to prevent errors in transmission
+ADC_SAMPLE_RATE = ((1.0/(ADC_CONVERT_TIME / 1000000000)) / ADC_DIVISOR)
 ADC_PACKET_SIZE = (0x2004)
-NUM_SAMPLES_PER_PACKET = ADC_PACKET_SIZE - 4
-ADC_MAX_VOLTAGEpp = 4.096
-ADC_RESOLUTION = ADC_MAX_VOLTAGEpp / pow(2, 18)
+ADC_MAX_VOLTAGEpp = 8.192
 
 VISA_DEVICE_DELAY = 1.0
 
-SIGNAL_GENERATOR_VOLTAGE = 2.048
+SIGNAL_GENERATOR_VOLTAGE = 8.192 # 8.192 # 2.048
 SIGNAL_GENERATOR_OFFSET = 0
 
 TRIUMF_AGILENT_33250A = "GPIB::10::INSTR"
 TRIUMF_SRS_DS360 = "GPIB::8::INSTR"
 
 # TODO: move these to args
-NUM_SAMPLES = ADC_SAMPLE_RATE / 32
+NUM_SAMPLES = ADC_SAMPLE_RATE / 16
 AVERAGING = 1
-WINDOW_CORR_FACTOR = 2 #  https://community.sw.siemens.com/s/article/window-correction-factors
+WINDOW_CORR_FACTOR = 2  # https://community.sw.siemens.com/s/article/window-correction-factors
 
 HISTOGRAM_AVG = 32
 
@@ -294,7 +292,7 @@ class FourierDemoFrame(wx.Frame):
 
         def get_data(frequency):
 
-            data = {'time': [], 'samples': []}
+            data = {'time': [], 'data': []}
             samples_to_take = ADC_SAMPLE_RATE / HISTOGRAM_AVG
 
             if(self.cmd_args.sim):
@@ -317,10 +315,12 @@ class FourierDemoFrame(wx.Frame):
                 sample_data = sample_data.astype(np.int32)
 
                 data['time'] = sample_time
-                data['samples'] = sample_data
+                data['data'] = sample_data
             else:
-                socket = moller_ctrl.data_init(self.cmd_args.ip)
-                samples = moller_ctrl.read_samples(socket, samples_to_take, ADC_CONVERT_TIME, ADC_PACKET_SIZE, True)
+                ctrl_socket = moller_ctrl.ctrl_init(self.cmd_args.ip)
+                data_socket = moller_ctrl.data_init(self.cmd_args.ip)
+                samples = moller_ctrl.read_samples(ctrl_socket, data_socket, samples_to_take, True)
+
                 time_data = []
                 sample_data = []
                 for sample in samples:
@@ -328,16 +328,17 @@ class FourierDemoFrame(wx.Frame):
                     sample_data.append(sample[2])
 
                 data['time'] = np.array(time_data)
-                data['samples'] = np.array(sample_data)
+                data['data'] = np.array(sample_data)
 
-                socket.close()
+                data_socket.close()
+                ctrl_socket.close()
 
             return data
 
         def update(i):
             data = get_data(self.frequency)
 
-            hist, _ = np.histogram(data['samples'], pow(2,18), range=(-pow(2,17), pow(2,17)), density=False)
+            hist, _ = np.histogram(data['data'], pow(2,18), range=(-pow(2,17), pow(2,17)), density=False)
 
             self.hist_sum = self.hist_sum + hist
             self.hist_queue.append(hist)
@@ -401,13 +402,7 @@ class FourierDemoFrame(wx.Frame):
         self.f0 = Param(self.frequency, minimum=1., maximum=8000000.)
         self.A = Param(1., minimum=0.01, maximum=2.)
         self.createPlots()
-
-        # Not sure I like having two params attached to the same Knob,
-        # but that is what we have here... it works but feels kludgy -
-        # although maybe it's not too bad since the knob changes both params
-        # at the same time (both f0 and A are affected during a drag)
         self.f0.attach(self)
-        # self.A.attach(self)
 
     def createControls(self, panel):
 
@@ -485,14 +480,14 @@ class FourierDemoFrame(wx.Frame):
 
         def get_data(frequency):
 
-            data = {'time': [], 'samples': []}
+            data = {'time': [], 'data': []}
 
             if(self.cmd_args.sim):
                 Fs = ADC_SAMPLE_RATE
                 sample_time = np.arange(0, NUM_SAMPLES * ADC_CONVERT_TIME * ADC_DIVISOR, ADC_CONVERT_TIME * ADC_DIVISOR)
 
                 sample_time = sample_time.astype(np.int32)
-                sample_data = np.sin(2 * np.pi * frequency / (ADC_CONVERT_TIME * ADC_DIVISOR) * sample_time / Fs) * pow(2,17)
+                sample_data = np.sin(2 * np.pi * frequency / (ADC_CONVERT_TIME * ADC_DIVISOR) * sample_time / Fs) * pow(2,NUM_ADC_BITS-1)
 
                 # Generate harmonics
                 # for n in range(20):
@@ -507,10 +502,12 @@ class FourierDemoFrame(wx.Frame):
                 sample_data = sample_data.astype(np.int32)
 
                 data['time'] = sample_time
-                data['samples'] = sample_data
+                data['data'] = sample_data
             else:
-                socket = moller_ctrl.data_init(self.cmd_args.ip)
-                samples = moller_ctrl.read_samples(socket, NUM_SAMPLES, ADC_CONVERT_TIME, ADC_PACKET_SIZE, True)
+                ctrl_socket = moller_ctrl.ctrl_init(self.cmd_args.ip)
+                data_socket = moller_ctrl.data_init(self.cmd_args.ip)
+                samples = moller_ctrl.read_samples(ctrl_socket, data_socket, NUM_SAMPLES, True)
+
                 time_data = []
                 sample_data = []
                 for sample in samples:
@@ -518,9 +515,10 @@ class FourierDemoFrame(wx.Frame):
                     sample_data.append(sample[2])
 
                 data['time'] = np.array(time_data)
-                data['samples'] = np.array(sample_data)
+                data['data'] = np.array(sample_data)
 
-                socket.close()
+                data_socket.close()
+                ctrl_socket.close()
 
             return data
 
@@ -554,8 +552,6 @@ class FourierDemoFrame(wx.Frame):
             return self.dat_ln, self.fft_ln, self.fft_zoom_ln, self.coh_chart_lc, self.coh_chart_stepped_lc
 
         def update(i):
-
-
             if(self.frequency != self.f0.value):
                 self.frequency = self.f0.value
                 if(self.gpib_res != None) and self.use_gpib:
@@ -567,8 +563,8 @@ class FourierDemoFrame(wx.Frame):
 
             plot_data = get_data(self.frequency)
 
-            time_with_zc = plot_data['time'] / 1000000000  # Put into seconds
-            data_with_zc = plot_data['samples']
+            time_with_zc = plot_data['time'] / 1000000000.0  # Put into seconds
+            data_with_zc = plot_data['data']
 
             samples_per_period = int(ADC_SAMPLE_RATE / self.frequency)
             num_periods = math.floor(len(data_with_zc) / samples_per_period)
@@ -593,7 +589,7 @@ class FourierDemoFrame(wx.Frame):
                 dat_plot_sample_count = len(data_with_zc)
 
             self.dat_chart.set_xlim([0, time_with_zc[dat_plot_sample_count-1]])
-            self.dat_ln.set_data(time_with_zc[0:dat_plot_sample_count], data_with_zc[0:dat_plot_sample_count] * ADC_RESOLUTION)
+            self.dat_ln.set_data(time_with_zc[0:dat_plot_sample_count], data_with_zc[0:dat_plot_sample_count])
 
             # Prep for coherent plot, break data into segments
             self.coh_chart.set_xlim(0,(samples_per_period*ADC_CONVERT_TIME*ADC_DIVISOR))
@@ -613,12 +609,11 @@ class FourierDemoFrame(wx.Frame):
 
             coherent_segments = []
             for n in range(0, range_of_segments):
-                coherent_segments.append( np.stack((time_segment , data_segments[n] * ADC_RESOLUTION), axis=1) )
-
+                coherent_segments.append( np.stack((time_segment , data_segments[n]), axis=1) )
 
             coherent_segments_stepped = []
             for n in range(0, len(data_segments), step_of_segments):
-                coherent_segments_stepped.append( np.stack((time_segment, data_segments[n] * ADC_RESOLUTION), axis=1) )
+                coherent_segments_stepped.append( np.stack((time_segment, data_segments[n]), axis=1) )
 
             if(samples_per_period > len(time_segment)):
                 samples_per_period = len(time_segment)
@@ -635,8 +630,7 @@ class FourierDemoFrame(wx.Frame):
             # fft_data = fft_data / len(fft_data)
             # p_dB = 20*np.log10(fft_data / pow(2,17)) # Converting to dB from voltage
 
-            data_full = data_full / pow(2,17)
-            fft_bins, Pxx = sp.signal.welch(data_full, ADC_SAMPLE_RATE, scaling='spectrum', nperseg=math.ceil(len(data_full)/AVERAGING), window=sp.signal.windows.get_window('hann', math.ceil(len(data_full)/AVERAGING), True))
+            fft_bins, Pxx = sp.signal.welch(data_full, ADC_SAMPLE_RATE, scaling='spectrum', nperseg=math.ceil(len(data_full)/AVERAGING), window=sp.signal.windows.get_window('blackman', math.ceil(len(data_full)/AVERAGING), True))
             p_dB = 10 * np.log10(Pxx * WINDOW_CORR_FACTOR)
 
             self.fft_chart.set_xlim([self.fft_chart_zoom_xmin, self.fft_chart_zoom_xmax])

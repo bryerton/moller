@@ -139,7 +139,6 @@ def arg_data(args):
     args.ch1 = args.ch1 - 1
     args.ch2 = args.ch2 - 1
 
-
     moller_ctrl.write_msg(ctrl_socket, 0x44, 0x80000000 | (args.ch1 << 16) | (args.ch2 << 20) | (rate_divisor << 24)  | moller_ctrl.ADC_PACKET_SIZE)
     moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000 | (sample_rate << 16))
 
@@ -311,7 +310,7 @@ def arg_plot(args):
 
             a.set_yticks([moller_ctrl.VOLT_MIN, moller_ctrl.VOLT_MIN/2, 0, moller_ctrl.VOLT_MAX/2, moller_ctrl.VOLT_MAX])
             a.set_xlim([0, xlim])
-            a.set_ylim(moller_ctrl.VOLT_MIN, moller_ctrl.VOLT_MAX)
+            a.set_ylim(moller_ctrl.VOLT_MIN - 0.200, moller_ctrl.VOLT_MAX + 0.200)
             a.grid(True)
 
         return lines
@@ -472,7 +471,7 @@ def arg_align(args):
     print("Calculated values")
     for ch in range(16):
         mid = moller_util.find_mid_of_longest_run(combined_map[ch], 0)
-        combined_map[ch] = np.roll(combined_map[ch], -mid)
+        # combined_map[ch] = np.roll(combined_map[ch], -mid)
         moller_ctrl.write_msg(ctrl_socket, 0x60 + (ch*4), mid)
         print(hex(mid))
 

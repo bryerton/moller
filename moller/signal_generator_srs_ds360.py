@@ -19,9 +19,9 @@ class SFSDS360(SignalGenerator):
         self.res.write("FUNC 0")
         self.res.write("OFFS " + str(self.offset))
         self.res.write("AMPL " + str(self.amplitude) + " VP")
-        self.res.write("OUTM 0")
-        self.res.write("OUTE 1")
-        self.res.write("TERM 0")
+        self.res.write("OUTM 1")  # Output Type 0=Unbalanced, 1=Balanced
+        self.res.write("OUTE 1")  # Output Enable
+        self.res.write("TERM 3")  # Source impediance 0=50R, 1=150R, 2=600R, 3=HiZ
 
 
     def set_frequency(self, frequency):

@@ -7,6 +7,7 @@ import time
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
+import struct
 from threading import Thread
 from . import ctrl as moller_ctrl
 from . import util as moller_util
@@ -110,6 +111,16 @@ def arg_status(args):
 
     resp = moller_ctrl.read_msg(socket, 0xE8)
     print('TI FIFO Count: ' + str(int(resp)))
+
+
+    pub = moller_ctrl.pub_init(args.ip)
+    while(True):
+        time.sleep(0.1)
+        resp = pub.recv_multipart()
+        status_payload = resp[1]
+        print(len(status_payload))
+        num_pkts, num_bytes, num_errors, num_valid, num_timeouts, num_samples, num_status, num_adc, num_ti, num_avg = struct.unpack("<IIIIIIIIII", status_payload)
+        print(f"Packets: {num_pkts}\tBytes: {num_bytes}\tErrors: {num_errors}\tValid: {num_valid}\tTimeouts: {num_timeouts}\tSamples: {num_samples}\tStatus: {num_status}\tADC: {num_adc}\tTI: {num_ti}\tAVG: {num_avg}")
 
 
 def arg_data(args):
@@ -430,84 +441,89 @@ def arg_align(args):
     dco_map = []
     combined_map =[]
 
-    for ch in range(16):
-        pat_map.append([])
-        dco_map.append([])
-        combined_map.append([])
-
-
-    print("Initial values")
-    for ch in range(16):
-        result = moller_ctrl.read_msg(ctrl_socket, 0x60 + (ch*4))
-        print(hex(result))
-
-    for n in range(moller_ctrl.MAX_DELAY_VALUE+1):
-
-        print("Tap position: " + str(n) + " / " + str(moller_ctrl.MAX_DELAY_VALUE),end='\r')
-
-        # Update delay for each channel
+    if args.ch != -1:
+        ch = args.ch
+        delay = args.delay
+        moller_ctrl.write_msg(ctrl_socket, 0x60 + (ch*4), delay)
+    else:
         for ch in range(16):
-            moller_ctrl.write_msg(ctrl_socket, 0x60 + (ch*4), n)
+            pat_map.append([])
+            dco_map.append([])
+            combined_map.append([])
 
-        # Clear counters and set to Test Mode
-        moller_ctrl.write_msg(ctrl_socket, 0x48, 0xD0000000)
-        time.sleep(0.02)
-        moller_ctrl.write_msg(ctrl_socket, 0x48, 0xC0000000)
-        time.sleep(0.02)
 
+        print("Initial values")
         for ch in range(16):
-            result = moller_ctrl.read_msg(ctrl_socket, 0x0 + (ch*4))
-            pat_map[ch].append(result & 0xFFFF)
-            dco_map[ch].append((result >> 16) & 0xFFFF)
-            if(result > 0):
-                combined_map[ch].append(1)
-            else:
-                combined_map[ch].append(0)
+            result = moller_ctrl.read_msg(ctrl_socket, 0x60 + (ch*4))
+            print(hex(result))
+
+        for n in range(moller_ctrl.MAX_DELAY_VALUE+1):
+
+            print("Tap position: " + str(n) + " / " + str(moller_ctrl.MAX_DELAY_VALUE),end='\r')
+
+            # Update delay for each channel
+            for ch in range(16):
+                moller_ctrl.write_msg(ctrl_socket, 0x60 + (ch*4), n)
+
+            # Clear counters and set to Test Mode
+            moller_ctrl.write_msg(ctrl_socket, 0x48, 0xD0000000)
+            time.sleep(0.02)
+            moller_ctrl.write_msg(ctrl_socket, 0x48, 0xC0000000)
+            time.sleep(0.02)
+
+            for ch in range(16):
+                result = moller_ctrl.read_msg(ctrl_socket, 0x0 + (ch*4))
+                pat_map[ch].append(result & 0xFFFF)
+                dco_map[ch].append((result >> 16) & 0xFFFF)
+                if(result > 0):
+                    combined_map[ch].append(1)
+                else:
+                    combined_map[ch].append(0)
 
 
-    print("                                                                ")
+        print("                                                                ")
 
-    # Calculate best position for each channel
-    print("Calculated values")
-    for ch in range(16):
-        mid = moller_util.find_mid_of_longest_run(combined_map[ch], 0)
-        # combined_map[ch] = np.roll(combined_map[ch], -mid)
-        moller_ctrl.write_msg(ctrl_socket, 0x60 + (ch*4), mid)
-        print(hex(mid))
+        # Calculate best position for each channel
+        print("Calculated values")
+        for ch in range(16):
+            mid = moller_util.find_mid_of_longest_run(combined_map[ch], 0)
+            # combined_map[ch] = np.roll(combined_map[ch], -mid)
+            moller_ctrl.write_msg(ctrl_socket, 0x60 + (ch*4), mid)
+            print(hex(mid))
 
-    # Reset the counters and take it out of test mode
-    moller_ctrl.write_msg(ctrl_socket, 0x48, 0x90000000)
-    time.sleep(0.02)
-    moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000)
+        # Reset the counters and take it out of test mode
+        moller_ctrl.write_msg(ctrl_socket, 0x48, 0x90000000)
+        time.sleep(0.02)
+        moller_ctrl.write_msg(ctrl_socket, 0x48, 0x80000000)
 
-    # plot
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, sharey=True)
+        # plot
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, sharey=True)
 
-    ax1.set_title("Test Pattern Errors")
-    ax1.set_ylabel("ADC Channel")
-    ax1.set_xlabel("Delay Value (tap)")
-    ax1.set_yticks([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16'])
-    ax1.grid(visible=True, axis='y')
-    im_pat = ax1.imshow(pat_map, interpolation='None', aspect='auto', extent=[0, 512, 0, 16])
+        ax1.set_title("Test Pattern Errors")
+        ax1.set_ylabel("ADC Channel")
+        ax1.set_xlabel("Delay Value (tap)")
+        ax1.set_yticks([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16'])
+        ax1.grid(visible=True, axis='y')
+        im_pat = ax1.imshow(pat_map, interpolation='None', aspect='auto', extent=[0, 512, 0, 16])
 
-    ax2.set_title("DCO Misalignments")
-    ax2.set_ylabel("Channel")
-    ax2.set_xlabel("Delay Value")
-    ax2.set_yticks([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16'])
-    ax2.grid(visible=True, axis='y')
-    im_dco = ax2.imshow(dco_map, interpolation='None', aspect='auto', extent=[0, 512, 0, 16])
+        ax2.set_title("DCO Misalignments")
+        ax2.set_ylabel("Channel")
+        ax2.set_xlabel("Delay Value")
+        ax2.set_yticks([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16'])
+        ax2.grid(visible=True, axis='y')
+        im_dco = ax2.imshow(dco_map, interpolation='None', aspect='auto', extent=[0, 512, 0, 16])
 
-    ax3.set_title("Combined Errors")
-    ax3.set_ylabel("Channel")
-    ax3.set_xlabel("Delay Value")
-    ax3.set_yticks([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16'])
-    ax3.grid(visible=True, axis='y')
-    im_comb = ax3.imshow(combined_map, interpolation='None', aspect='auto', extent=[0, 512, 0, 16])
+        ax3.set_title("Combined Errors")
+        ax3.set_ylabel("Channel")
+        ax3.set_xlabel("Delay Value")
+        ax3.set_yticks([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15], ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16'])
+        ax3.grid(visible=True, axis='y')
+        im_comb = ax3.imshow(combined_map, interpolation='None', aspect='auto', extent=[0, 512, 0, 16])
 
-    # fig.colorbar(im_pat, ax=ax1)
-    fig.colorbar(im_comb, ax=ax3)
-    fig.tight_layout()
-    plt.show()
+        # fig.colorbar(im_pat, ax=ax1)
+        fig.colorbar(im_comb, ax=ax3)
+        fig.tight_layout()
+        plt.show()
 
 def arg_discover(args):
     # Load config
@@ -559,6 +575,8 @@ def main():
 
     align_parser = cmd_parser.add_parser("align")
     align_parser.set_defaults(func=arg_align)
+    align_parser.add_argument("ch", default=-1, type=int, nargs="?", help='[0-15] ADC channel to align')
+    align_parser.add_argument("delay", default=0, type=int, nargs="?", help="[0-511] Delay")
 
     plot_parser = cmd_parser.add_parser("plot")
     plot_parser.set_defaults(func=arg_plot)

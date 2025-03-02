@@ -8,7 +8,6 @@ docs: ## Update python docs
 
 clean: ## Clean python cache files
 	@rm -rf output/* moller/__pycache__
-	@cd docs/sphinx; make clean
 
 build:
 	@python -m build -o output
@@ -21,4 +20,4 @@ test: ## Build and upload python scripts to testpypi
 upload: ## Build and upload python scripts
 	@make clean build
 	@rm -rf output/*.egg-info/
-	@twine upload -r pypi output/* || true
+	@twine upload -r moller output/* || true

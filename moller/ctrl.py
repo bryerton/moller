@@ -68,6 +68,32 @@ def data_init(ip: str, port: int = 5556) -> zmq.Socket:
     return socket
 
 
+
+def pub_init(ip: str, port: int = 5556) -> zmq.Socket:
+    """Initialize 0MQ socket for subscriber to data publisher on digitizer
+
+    Args:
+        ip (str): String containing IP address of digitizer
+        port (int): Integer of control port, typically left at default
+
+    Returns:
+        0MQ socket
+
+    """
+    try:
+        context = zmq.Context()
+        url = "tcp://" + str(ip) + ":" + str(port)
+        #  Socket to talk to server
+        socket = context.socket(zmq.SUB)
+        socket.setsockopt_string( zmq.SUBSCRIBE, "STATUS")
+        socket.connect(url)
+
+    except zmq.ZMQError:
+        # No message received, keep looping
+        socket = None
+
+    return socket
+
 def write_msg(socket: zmq.Socket, addr: int, data: int) -> int:
     """Write a message to the control socket on digitizer
 
@@ -153,7 +179,7 @@ def read_samples(ctrl_socket: zmq.Socket, data_socket: zmq.Socket, num_samples_t
     poller.register(data_socket, zmq.POLLIN)
 
     while sample_count < num_samples_to_read:
-        res = poller.poll(timeout=50)
+        res = poller.poll(timeout=500)
         if res:
             msg = data_socket.recv_multipart(zmq.NOBLOCK)
             num_words, num_pkt, id, pkt_ts = struct.unpack_from("<HIxBQ", msg[1], 0)
@@ -165,6 +191,7 @@ def read_samples(ctrl_socket: zmq.Socket, data_socket: zmq.Socket, num_samples_t
                 ts = pkt_ts * CLOCKS_TO_NANOSECONDS
 
             prev_pkt = num_pkt
+
         else:
             return None
 
